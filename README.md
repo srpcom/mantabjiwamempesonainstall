@@ -1,0 +1,2 @@
+# mantabjiwamempesonainstall
+auoinstall linux
