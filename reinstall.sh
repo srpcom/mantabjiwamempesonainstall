@@ -22,6 +22,22 @@ export LC_ALL=C
 # 不要漏了最后的 $PATH，否则会找不到 windows 系统程序例如 diskpart
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
 
+# 如果不是 bash 的话，继续执行会有语法错误，因此在这里判断是否 bash
+if [ -z "$BASH" ]; then
+    if [ -f /etc/alpine-release ]; then
+        if ! apk add bash; then
+            echo "Error while install bash." >&2
+            exit 1
+        fi
+    fi
+    if command -v bash >/dev/null; then
+        exec bash "$0" "$@"
+    else
+        echo "Please run this script with bash." >&2
+        exit 1
+    fi
+fi
+
 # 记录日志，过滤含有 password 的行
 exec > >(tee >(grep -iv password >>/reinstall.log)) 2>&1
 THIS_SCRIPT=$(readlink -f "$0")
@@ -34,11 +50,6 @@ trap_err() {
     error "Line $line_no return $ret_no"
     sed -n "$line_no"p "$THIS_SCRIPT"
 }
-
-if ! { [ -n "$BASH" ] && [ -n "$BASH_VERSION" ]; }; then
-    echo "Please run this script with bash." >&2
-    exit 1
-fi
 
 usage_and_exit() {
     if is_in_windows; then
@@ -53,10 +64,11 @@ Usage: $reinstall_____ anolis      7|8|23
                        oracle      8|9|10
                        almalinux   8|9|10
                        centos      9|10
+                       fnos        1
+                       nixos       25.11
                        fedora      42|43
-                       nixos       25.05
                        debian      9|10|11|12|13
-                       alpine      3.19|3.20|3.21|3.22
+                       alpine      3.20|3.21|3.22|3.23
                        opensuse    15.6|16.0|tumbleweed
                        openeuler   20.03|22.03|24.03|25.09
                        ubuntu      16.04|18.04|20.04|22.04|24.04|25.10 [--minimal]
@@ -64,7 +76,6 @@ Usage: $reinstall_____ anolis      7|8|23
                        arch
                        gentoo
                        aosc
-                       fnos
                        redhat      --img="http://access.cdn.redhat.com/xxx.qcow2"
                        dd          --img="http://xxx.com/yyy.zzz" (raw image stores in raw/vhd/tar/gz/xz/zst)
                        windows     --image-name="windows xxx yyy" --lang=xx-yy
@@ -859,7 +870,7 @@ is_have_arm_version() {
 
 find_windows_iso() {
     parse_windows_image_name || error_and_exit "--image-name wrong: $image_name"
-    if ! [ "$version" = 8.1 ] && [ -z "$edition" ]; then
+    if ! { [ "$version" = 8 ] || [ "$version" = 8.1 ]; } && [ -z "$edition" ]; then
         error_and_exit "Edition is not set."
     fi
 
@@ -908,7 +919,8 @@ get_windows_iso_link() {
                     x86) echo _ ;;
                     esac
                     ;;
-                homebasic | homepremium | business | ultimate) echo _ ;;
+                homebasic | homepremium | ultimate) echo _ ;;
+                business | enterprise) echo "$edition" ;;
                 esac
                 ;;
             7)
@@ -927,10 +939,9 @@ get_windows_iso_link() {
                 professional | enterprise | ultimate) echo "$edition" ;;
                 esac
                 ;;
-            # massgrave 不提供 windows 8 下载
-            8.1)
+            8 | 8.1)
                 case "$edition" in
-                '') echo _ ;; # windows 8.1 core
+                '') echo _ ;; # windows 8.x core
                 pro | enterprise) echo "$edition" ;;
                 esac
                 ;;
@@ -1025,7 +1036,7 @@ get_windows_iso_link() {
             echo server
         else
             case "$version" in
-            vista | 7 | 8.1 | 10 | 11)
+            vista | 7 | 8 | 8.1 | 10 | 11)
                 echo "$version"
                 ;;
             esac
@@ -1487,8 +1498,8 @@ Continue?
             dir=distribution/leap/$releasever/appliances
             case "$releasever" in
             15.6) file=openSUSE-Leap-$releasever-Minimal-VM.$basearch-Cloud.qcow2 ;;
-            # 16.0) file=Leap-$releasever-Minimal-VM.$basearch-Cloud.qcow2 ;; # 缺少 openSUSE-repos-Leap 包，导致没有源
-            16.0) file=Leap-$releasever-Minimal-VM.$basearch-kvm$(if [ "$basearch" = x86_64 ]; then echo '-and-xen'; fi).qcow2 ;;
+            16.0) file=Leap-$releasever-Minimal-VM.$basearch-Cloud.qcow2 ;;
+            # 16.0) file=Leap-$releasever-Minimal-VM.$basearch-kvm$(if [ "$basearch" = x86_64 ]; then echo '-and-xen'; fi).qcow2 ;;
             esac
 
             # https://src.opensuse.org/openSUSE/Leap-Images/src/branch/leap-16.0/kiwi-templates-Minimal/Minimal.kiwi
@@ -1907,11 +1918,12 @@ verify_os_name() {
         'almalinux   8|9|10' \
         'rocky       8|9|10' \
         'oracle      8|9|10' \
+        'fnos        1' \
         'fedora      42|43' \
-        'nixos       25.05' \
+        'nixos       25.11' \
         'debian      9|10|11|12|13' \
         'opensuse    15.6|16.0|tumbleweed' \
-        'alpine      3.19|3.20|3.21|3.22' \
+        'alpine      3.20|3.21|3.22|3.23' \
         'openeuler   20.03|22.03|24.03|25.09' \
         'ubuntu      16.04|18.04|20.04|22.04|24.04|25.10' \
         'redhat' \
@@ -1919,7 +1931,6 @@ verify_os_name() {
         'arch' \
         'gentoo' \
         'aosc' \
-        'fnos' \
         'windows' \
         'dd' \
         'netboot.xyz'; do
@@ -2343,10 +2354,6 @@ prompt_password() {
     warn false "Leave blank to use a random password."
     warn false "不填写则使用随机密码"
     while true; do
-        # 特殊字符列表
-        # https://learn.microsoft.com/previous-versions/windows/it-pro/windows-server-2012-r2-and-2012/hh994562(v=ws.11)
-        chars=\''A-Za-z0-9~!@#$%^&*_=+`|(){}[]:;"<>,.?/-'
-        random_password=$(tr -dc "$chars" </dev/random | head -c16)
         IFS= read -r -p "Password: " password
         if [ -n "$password" ]; then
             IFS= read -r -p "Retype password: " password_confirm
@@ -2356,7 +2363,11 @@ prompt_password() {
                 error "Passwords don't match. Try again."
             fi
         else
-            password=$random_password
+            # 特殊字符列表
+            # https://learn.microsoft.com/previous-versions/windows/it-pro/windows-server-2012-r2-and-2012/hh994562(v=ws.11)
+            # 有的机器运行 centos 7 ，用 /dev/random 产生 16 位密码，开启了 rngd 也要 5 秒，关闭了 rngd 则长期阻塞
+            chars=\''A-Za-z0-9~!@#$%^&*_=+`|(){}[]:;"<>,.?/-'
+            password=$(tr -dc "$chars" </dev/urandom | head -c16)
             break
         fi
     done
@@ -4004,7 +4015,7 @@ EOF
 
         # https://manpages.debian.org/testing/openssh-server/authorized_keys.5.en.html#AUTHORIZED_KEYS_FILE_FORMAT
         is_valid_ssh_key() {
-            grep -qE '^(ecdsa-sha2-nistp(256|384|512)|ssh-(ed25519|rsa)) ' <<<"$1"
+            grep -qE '^(ecdsa-sha2-nistp(256|384|521)|ssh-(ed25519|rsa)) ' <<<"$1"
         }
 
         [ -n "$2" ] || ssh_key_error_and_exit "Need value for $1"
